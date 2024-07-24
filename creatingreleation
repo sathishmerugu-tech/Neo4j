@@ -1,0 +1,62 @@
+CALL apoc.periodic.iterate(
+  "
+  LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS csvLine FIELDTERMINATOR '^' RETURN csvLine
+  ",
+  "
+  WITH csvLine,
+  CASE 
+    WHEN csvLine.entity_type = 'RACK' THEN 'equipmentholder'
+    WHEN csvLine.entity_type = 'SHELF' THEN 'equipmentholder'
+    WHEN csvLine.entity_type = 'SLOT' THEN 'equipmentholder'
+    WHEN csvLine.entity_type = 'CARD' THEN 'equipment'
+    WHEN csvLine.entity_type = 'SUBSLOT' THEN 'equipment'
+    WHEN csvLine.entity_type = 'SUB-SLOT' THEN 'equipment'
+    ELSE 'junk'
+  END AS ch,
+  CASE 
+    WHEN split(csvLine.parent_entity, '-')[0] = 'RACK' THEN 'equipmentholder'
+    WHEN split(csvLine.parent_entity, '-')[0] = 'SHELF' THEN 'equipmentholder'
+    WHEN split(csvLine.parent_entity, '-')[0] = 'SLOT' THEN 'equipmentholder'
+    WHEN split(csvLine.parent_entity, '-')[0] = 'CARD' THEN 'equipment'
+    WHEN split(csvLine.parent_entity, '-')[0] = 'SUBSLOT' THEN 'equipment'
+    WHEN split(csvLine.parent_entity, '-')[0] = 'SUB-SLOT' THEN 'equipment'
+    ELSE 'junk'
+  END AS pa,
+  split(csvLine.parent_entity, '-') AS parent_parts
+  WITH csvLine, ch, pa, parent_parts
+  WHERE size(parent_parts) = 3
+  WITH csvLine, ch, pa, parent_parts,
+  apoc.map.fromLists(['eid', 'etype', 'ess'], parent_parts) AS pkeys
+
+  // Retrieve the child node
+  CALL apoc.do.case(
+    [
+      ch = 'equipment', 
+      'MATCH (n:equipment) WHERE n.entity_id = csvLine.entity_id AND n.entity_type = csvLine.entity_type AND n.source_sys = csvLine.source_sys RETURN n',
+      ch = 'equipmentholder',
+      'MATCH (n:equipmentholder) WHERE n.entity_id = csvLine.entity_id AND n.entity_type = csvLine.entity_type AND n.source_sys = csvLine.source_sys RETURN n'
+    ],
+    'RETURN null'
+  ) YIELD value AS child_value
+
+  WITH child_value, csvLine, ch, pa, pkeys
+
+  // Retrieve the parent node
+  CALL apoc.do.case(
+    [
+      pa = 'equipment', 
+      'MATCH (n:equipment) WHERE n.entity_id = pkeys.eid AND n.entity_type = pkeys.etype AND n.source_sys = pkeys.ess RETURN n',
+      pa = 'equipmentholder', 
+      'MATCH (n:equipmentholder) WHERE n.entity_id = pkeys.eid AND n.entity_type = pkeys.etype AND n.source_sys = pkeys.ess RETURN n'
+    ],
+    'RETURN null'
+  ) YIELD value AS parent_value
+
+  WITH parent_value, child_value, csvLine
+  WHERE parent_value IS NOT NULL AND child_value IS NOT NULL
+  CREATE (parent_value)-[c:CONTAINS]->(child_value)
+  SET c += csvLine
+  RETURN c
+  ",
+  {batchSize: 1000, parallel: true}
+);
