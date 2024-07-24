@@ -1,17 +1,17 @@
 CALL apoc.periodic.iterate(
   "LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS csvLine FIELDTERMINATOR '^' RETURN csvLine",
-  "WITH csvLine
-  WITH csvLine, 
-    CASE 
-      WHEN csvLine.entity_type IN ['RACK', 'SHELF', 'SLOT'] THEN 'equipmentholder'
-      WHEN csvLine.entity_type IN ['CARD', 'SUBSLOT', 'SUB-SLOT'] THEN 'equipment'
-      ELSE 'junk'
-    END AS c,
-    CASE 
-      WHEN split(csvLine.parent_entity, '-')[0] IN ['RACK', 'SHELF', 'SLOT'] THEN 'equipmentholder'
-      WHEN split(csvLine.parent_entity, '-')[0] IN ['CARD', 'SUBSLOT', 'SUB-SLOT'] THEN 'equipment'
-      ELSE 'junk'
-    END AS pa
+  "WITH csvLine,
+  CASE 
+    WHEN csvLine.entity_type IN ['RACK', 'SHELF', 'SLOT'] THEN 'equipmentholder'
+    WHEN csvLine.entity_type IN ['CARD', 'SUBSLOT', 'SUB-SLOT'] THEN 'equipment'
+    ELSE 'junk'
+  END AS c,
+  CASE 
+    WHEN split(csvLine.parent_entity, '-')[0] IN ['RACK', 'SHELF', 'SLOT'] THEN 'equipmentholder'
+    WHEN split(csvLine.parent_entity, '-')[0] IN ['CARD', 'SUBSLOT', 'SUB-SLOT'] THEN 'equipment'
+    ELSE 'junk'
+  END AS pa
+
   CALL {
     WITH csvLine, c
     CALL apoc.cypher.run(
@@ -22,6 +22,7 @@ CALL apoc.periodic.iterate(
     ) YIELD value
     RETURN value.child AS child
   }
+
   WITH csvLine, pa, child, split(csvLine.parent_entity, '-') AS pkeys
   WHERE size(pkeys) = 3
   CALL {
@@ -34,6 +35,7 @@ CALL apoc.periodic.iterate(
     ) YIELD value
     RETURN value.parent AS parent
   }
+
   WITH child, parent, csvLine
   CREATE (parent)-[:contains]->(child)
   SET child = csvLine
