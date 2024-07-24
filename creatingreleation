@@ -1,59 +1,40 @@
 CALL apoc.periodic.iterate(
-  "LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS csvLine FIELDTERMINATOR '^' RETURN csvLine",
-  "
-  WITH csvLine,
-  CASE 
-    WHEN csvLine.entity_type = 'RACK' THEN 'equipmentholder'
-    WHEN csvLine.entity_type = 'SHELF' THEN 'equipmentholder'
-    WHEN csvLine.entity_type = 'SLOT' THEN 'equipmentholder'
-    WHEN csvLine.entity_type = 'CARD' THEN 'equipment'
-    WHEN csvLine.entity_type = 'SUBSLOT' THEN 'equipment'
-    WHEN csvLine.entity_type = 'SUB-SLOT' THEN 'equipment'
+  "LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS csvLine FIELTERMINATOR ',' RETURN csvLine",
+  "WITH csvLine, keys(csvLine) as keys,
+  (CASE csvLine.entity_type
+    WHEN 'RACK' THEN 'equipmentholder'
+    WHEN 'SHELF' THEN 'equipmentholder'
+    WHEN 'SLOT' THEN 'equipmentholder'
+    WHEN 'CARD' THEN 'equipment'
+    WHEN 'SUBSLOT' THEN 'equipment'
+    WHEN 'SUB-SLOT' THEN 'equipment'
     ELSE 'junk'
-  END AS ch,
-  CASE 
-    WHEN split(csvLine.parent_entity, '-')[0] = 'RACK' THEN 'equipmentholder'
-    WHEN split(csvLine.parent_entity, '-')[0] = 'SHELF' THEN 'equipmentholder'
-    WHEN split(csvLine.parent_entity, '-')[0] = 'SLOT' THEN 'equipmentholder'
-    WHEN split(csvLine.parent_entity, '-')[0] = 'CARD' THEN 'equipment'
-    WHEN split(csvLine.parent_entity, '-')[0] = 'SUBSLOT' THEN 'equipment'
-    WHEN split(csvLine.parent_entity, '-')[0] = 'SUB-SLOT' THEN 'equipment'
+  END) AS c,
+  (CASE split(csvLine.parent_entity,'-')[0]
+    WHEN 'RACK' THEN 'equipmentholder'
+    WHEN 'SHELF' THEN 'equipmentholder'
+    WHEN 'SLOT' THEN 'equipmentholder'
+    WHEN 'CARD' THEN 'equipment'
+    WHEN 'SUBSLOT' THEN 'equipment'
+    WHEN 'SUB-SLOT' THEN 'equipment'
     ELSE 'junk'
-  END AS pa,
-  split(csvLine.parent_entity, '-') AS parent_parts
-  WITH csvLine, ch, pa, parent_parts
-  WHERE size(parent_parts) = 3
-  WITH csvLine, ch, pa, parent_parts, apoc.map.fromLists(['eid', 'etype', 'ess'], parent_parts) AS pkeys
+  END) AS pa
 
-  // Retrieve the child node
-  CALL apoc.do.case(
-    [
-      ch = 'equipment', 
-      'MATCH (n:equipment) WHERE n.entity_id = csvLine.entity_id AND n.entity_type = csvLine.entity_type AND n.source_sys = csvLine.source_sys RETURN {node: n}',
-      ch = 'equipmentholder',
-      'MATCH (n:equipmentholder) WHERE n.entity_id = csvLine.entity_id AND n.entity_type = csvLine.entity_type AND n.source_sys = csvLine.source_sys RETURN {node: n}'
-    ],
-    'RETURN {node: null}'
-  ) YIELD value AS child_value
+  CALL apoc.do.case([
+    c = 'equipment', 'MATCH (n:equipment) WHERE n.entity_id = $entity_id AND n.entity_type = $entity_type AND n.source_sys = $source_sys RETURN n as child',
+    c = 'equipmentholder', 'MATCH (n:equipmentholder) WHERE n.entity_id = $entity_id AND n.entity_type = $entity_type AND n.source_sys = $source_sys RETURN n as child'],
+    csvLine) YIELD value
 
-  WITH child_value, csvLine, ch, pa, pkeys
+  WITH csvLine, pa, value.child as child, split(csvLine.parent_entity,'-') as pkeys
+  WHERE size(pkeys) = 3
+  CALL apoc.do.case([
+    pa = 'equipment', 'MATCH (n:equipment) WHERE n.entity_id = $eid AND n.entity_type = $etype AND n.source_sys = $ess RETURN n as parent',
+    pa = 'equipmentholder', 'MATCH (n:equipmentholder) WHERE n.entity_id = $eid AND n.entity_type = $etype AND n.source_sys = $ess RETURN n as parent'],
+    {eid: pkeys[0], etype: pkeys[1], ess: pkeys[2]}) YIELD value
 
-  // Retrieve the parent node
-  CALL apoc.do.case(
-    [
-      pa = 'equipment', 
-      'MATCH (n:equipment) WHERE n.entity_id = pkeys.eid AND n.entity_type = pkeys.etype AND n.source_sys = pkeys.ess RETURN {node: n}',
-      pa = 'equipmentholder', 
-      'MATCH (n:equipmentholder) WHERE n.entity_id = pkeys.eid AND n.entity_type = pkeys.etype AND n.source_sys = pkeys.ess RETURN {node: n}'
-    ],
-    'RETURN {node: null}'
-  ) YIELD value AS parent_value
-
-  WITH parent_value.node AS parent, child_value.node AS child, csvLine
-  WHERE parent IS NOT NULL AND child IS NOT NULL
-  CREATE (parent)-[c:CONTAINS]->(child)
-  SET c += csvLine
-  RETURN c
-  ",
-  {batchSize: 1000, parallel: true}
-);
+  WITH child, value.parent as parent, csvLine
+  CREATE (parent)-[:contains]->(child)
+  SET c = csvLine
+  RETURN c",
+  {batchSize:1000, parallel:true}
+)
