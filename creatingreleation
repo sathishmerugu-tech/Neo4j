@@ -1,5 +1,5 @@
 CALL apoc.periodic.iterate(
-  "LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS csvLine FIELTERMINATOR ',' RETURN csvLine",
+  "LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS csvLine FIELDTERMINATOR '^' RETURN csvLine",
   "WITH csvLine, keys(csvLine) as keys,
   (CASE csvLine.entity_type
     WHEN 'RACK' THEN 'equipmentholder'
@@ -10,7 +10,7 @@ CALL apoc.periodic.iterate(
     WHEN 'SUB-SLOT' THEN 'equipment'
     ELSE 'junk'
   END) AS c,
-  (CASE split(csvLine.parent_entity,'-')[0]
+  (CASE split(csvLine.parent_entity,'-')[1]
     WHEN 'RACK' THEN 'equipmentholder'
     WHEN 'SHELF' THEN 'equipmentholder'
     WHEN 'SLOT' THEN 'equipmentholder'
@@ -23,7 +23,7 @@ CALL apoc.periodic.iterate(
   CALL apoc.do.case([
     c = 'equipment', 'MATCH (n:equipment) WHERE n.entity_id = $entity_id AND n.entity_type = $entity_type AND n.source_sys = $source_sys RETURN n as child',
     c = 'equipmentholder', 'MATCH (n:equipmentholder) WHERE n.entity_id = $entity_id AND n.entity_type = $entity_type AND n.source_sys = $source_sys RETURN n as child'],
-    csvLine) YIELD value
+    {entity_id: csvLine.entity_id, entity_type: csvLine.entity_type, source_sys: csvLine.source_sys}) YIELD value
 
   WITH csvLine, pa, value.child as child, split(csvLine.parent_entity,'-') as pkeys
   WHERE size(pkeys) = 3
