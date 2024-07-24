@@ -1,38 +1,35 @@
 CALL apoc.periodic.iterate(
   "LOAD CSV WITH HEADERS FROM 'file:///test.csv' AS csvLine FIELDTERMINATOR '^' RETURN csvLine",
   "WITH csvLine,
-  (CASE csvLine.entity_type
-    WHEN 'RACK' THEN 'equipmentholder'
-    WHEN 'SHELF' THEN 'equipmentholder'
-    WHEN 'SLOT' THEN 'equipmentholder'
-    WHEN 'CARD' THEN 'equipment'
-    WHEN 'SUBSLOT' THEN 'equipment'
-    WHEN 'SUB-SLOT' THEN 'equipment'
+  CASE 
+    WHEN csvLine.entity_type IN ['RACK', 'SHELF', 'SLOT'] THEN 'equipmentholder'
+    WHEN csvLine.entity_type IN ['CARD', 'SUBSLOT', 'SUB-SLOT'] THEN 'equipment'
     ELSE 'junk'
-  END) AS c,
-  (CASE split(csvLine.parent_entity, '-')[1]
-    WHEN 'RACK' THEN 'equipmentholder'
-    WHEN 'SHELF' THEN 'equipmentholder'
-    WHEN 'SLOT' THEN 'equipmentholder'
-    WHEN 'CARD' THEN 'equipment'
-    WHEN 'SUBSLOT' THEN 'equipment'
-    WHEN 'SUB-SLOT' THEN 'equipment'
+  END AS c,
+  CASE 
+    WHEN split(csvLine.parent_entity, '-')[0] IN ['RACK', 'SHELF', 'SLOT'] THEN 'equipmentholder'
+    WHEN split(csvLine.parent_entity, '-')[0] IN ['CARD', 'SUBSLOT', 'SUB-SLOT'] THEN 'equipment'
     ELSE 'junk'
-  END) AS pa
+  END AS pa
 
-  CALL apoc.do.case([
-    c = 'equipment', 'MATCH (n:equipment) WHERE n.entity_id = $entity_id AND n.entity_type = $entity_type AND n.source_sys = $source_sys RETURN n as child',
-    c = 'equipmentholder', 'MATCH (n:equipmentholder) WHERE n.entity_id = $entity_id AND n.entity_type = $entity_type AND n.source_sys = $source_sys RETURN n as child'],
-    {entity_id: csvLine.entity_id, entity_type: csvLine.entity_type, source_sys: csvLine.source_sys}) YIELD value as resultChild
+  WITH csvLine, c, pa,
+  CASE 
+    WHEN c = 'equipment' THEN 'MATCH (n:equipment {entity_id: csvLine.entity_id, entity_type: csvLine.entity_type, source_sys: csvLine.source_sys}) RETURN n as child'
+    WHEN c = 'equipmentholder' THEN 'MATCH (n:equipmentholder {entity_id: csvLine.entity_id, entity_type: csvLine.entity_type, source_sys: csvLine.source_sys}) RETURN n as child'
+  END AS childQuery
 
-  WITH csvLine, pa, resultChild.child as child, split(csvLine.parent_entity, '-') as pkeys
+  CALL apoc.cypher.run(childQuery, {}) YIELD value as child
+
+  WITH csvLine, pa, child, split(csvLine.parent_entity, '-') AS pkeys
   WHERE size(pkeys) = 3
-  CALL apoc.do.case([
-    pa = 'equipment', 'MATCH (n:equipment) WHERE n.entity_id = $eid AND n.entity_type = $etype AND n.source_sys = $ess RETURN n as parent',
-    pa = 'equipmentholder', 'MATCH (n:equipmentholder) WHERE n.entity_id = $eid AND n.entity_type = $etype AND n.source_sys = $ess RETURN n as parent'],
-    {eid: pkeys[0], etype: pkeys[1], ess: pkeys[2]}) YIELD value as resultParent
+  CASE 
+    WHEN pa = 'equipment' THEN 'MATCH (n:equipment {entity_id: pkeys[0], entity_type: pkeys[1], source_sys: pkeys[2]}) RETURN n as parent'
+    WHEN pa = 'equipmentholder' THEN 'MATCH (n:equipmentholder {entity_id: pkeys[0], entity_type: pkeys[1], source_sys: pkeys[2]}) RETURN n as parent'
+  END AS parentQuery
 
-  WITH child, resultParent.parent as parent, csvLine
+  CALL apoc.cypher.run(parentQuery, {}) YIELD value as parent
+
+  WITH child, parent, csvLine
   CREATE (parent)-[:contains]->(child)
   SET child = csvLine
   RETURN child",
